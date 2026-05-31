@@ -1,0 +1,29 @@
+--- MainFeature.tsx
++++ MainFeature.tsx
+@@ -16,16 +16,16 @@
+ } from "../lib/contract";
+ 
+ function mapContractError(message: string): string {
+-  if (message.includes("#1")) return "Contract is already initialized.";
+-  if (message.includes("#2")) return "Contract is not initialized yet. Ask the admin to run the init command.";
+-  if (message.includes("#3")) return "Exactly 3 signers are required for initialization.";
+-  if (message.includes("#4")) return "You are not an authorized signer for this treasury.";
+-  if (message.includes("#5")) return "Proposal not found.";
+-  if (message.includes("#6")) return "This proposal has already been executed.";
+-  if (message.includes("#7")) return "You have already approved this proposal.";
+-  if (message.includes("#8")) return "Insufficient funds in the treasury to execute this withdrawal.";
+-  if (message.includes("#9")) return "You are not authorized to create proposals. Purchase the Submitter or Authorizer role first.";
+-  if (message.includes("#10")) return "You already have this role or you have insufficient XLM balance to pay the fee.";
++  if (message.match(/#1\b/)) return "Contract is already initialized.";
++  if (message.match(/#2\b/)) return "Contract is not initialized yet. Ask the admin to run the init command.";
++  if (message.match(/#3\b/)) return "Exactly 3 signers are required for initialization.";
++  if (message.match(/#4\b/)) return "You are not an authorized signer for this treasury.";
++  if (message.match(/#5\b/)) return "Proposal not found.";
++  if (message.match(/#6\b/)) return "This proposal has already been executed.";
++  if (message.match(/#7\b/)) return "You have already approved this proposal.";
++  if (message.match(/#8\b/)) return "Insufficient funds in the treasury to execute this withdrawal.";
++  if (message.match(/#9\b/)) return "You are not authorized to create proposals. Purchase the Submitter or Authorizer role first.";
++  if (message.match(/#10\b/)) return "You already have this role, or your XLM balance is too low to pay the fee.";
+   return message;
+ }
+ 

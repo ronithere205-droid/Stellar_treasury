@@ -1,0 +1,407 @@
+"use client";
+import { useState, useEffect, useCallback } from "react";
+import {
+  proposeWithdrawal,
+  approveProposal,
+  getProposal,
+  getProposalCounter,
+  getSigners,
+  getApprovals,
+  getSubmitters,
+  getSubmitterFee,
+  getAuthorizerFee,
+  buySubmitterRole,
+  buyAuthorizerRole,
+} from "../lib/contract";
+
+function mapContractError(message: string): string {
+  if (message.includes("#1")) return "Contract is already initialized.";
+  if (message.includes("#2")) return "Contract is not initialized yet. Ask the admin to run the init command.";
+  if (message.includes("#3")) return "Exactly 3 signers are required for initialization.";
+  if (message.includes("#4")) return "You are not an authorized signer for this treasury.";
+  if (message.includes("#5")) return "Proposal not found.";
+  if (message.includes("#6")) return "This proposal has already been executed.";
+  if (message.includes("#7")) return "You have already approved this proposal.";
+  if (message.includes("#8")) return "Insufficient funds in the treasury to execute this withdrawal.";
+  if (message.includes("#9")) return "You are not authorized to create proposals. Purchase the Submitter or Authorizer role first.";
+  if (message.includes("#10")) return "You already have this role.";
+  return message;
+}
+
+function formatXLM(stroops: bigint): string {
+  const xlm = Number(stroops) / 10_000_000;
+  return xlm.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+}
+
+interface ProposalData {
+  id: number;
+  proposer: string;
+  recipient: string;
+  amount: string;
+  reason: string;
+  executed: boolean;
+  approvers: string[];
+}
+
+export default function MainFeature({ publicKey }: { publicKey: string }) {
+  const [proposals, setProposals] = useState<ProposalData[]>([]);
+  const [signers, setSigners] = useState<string[]>([]);
+  const [submitters, setSubmitters] = useState<string[]>([]);
+  const [submitterFee, setSubmitterFee] = useState<bigint>(BigInt(0));
+  const [authorizerFee, setAuthorizerFee] = useState<bigint>(BigInt(0));
+  const [counter, setCounter] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [buyingRole, setBuyingRole] = useState(false);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const [recipient, setRecipient] = useState("");
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+
+  const isSigner = signers.includes(publicKey);
+  const isSubmitter = submitters.includes(publicKey);
+  const canPropose = isSigner || isSubmitter;
+  const canApprove = isSigner;
+  const approvalThreshold = Math.floor(signers.length / 2) + 1;
+
+  const loadData = useCallback(async () => {
+    try {
+      setDataLoading(true);
+      const [s, sub, sFee, aFee, c] = await Promise.all([
+        getSigners(),
+        getSubmitters(),
+        getSubmitterFee(),
+        getAuthorizerFee(),
+        getProposalCounter(),
+      ]);
+      setSigners(s);
+      setSubmitters(sub);
+      setSubmitterFee(sFee);
+      setAuthorizerFee(aFee);
+      setCounter(c);
+
+      const props: ProposalData[] = [];
+      for (let i = 1; i <= c; i++) {
+        try {
+          const p = await getProposal(i);
+          const approvers = await getApprovals(i);
+          const parsed =
+            p instanceof Map
+              ? Object.fromEntries(p)
+              : Array.isArray(p)
+              ? Object.fromEntries(p.map((x: any) => (Array.isArray(x) ? x : [x, x])))
+              : p;
+          props.push({
+            id: Number(parsed.id ?? i),
+            proposer: String(parsed.proposer ?? ""),
+            recipient: String(parsed.recipient ?? ""),
+            amount: String(parsed.amount ?? "0"),
+            reason: String(parsed.reason ?? ""),
+            executed: parsed.executed === true,
+            approvers: approvers.map(String),
+          });
+        } catch (e) {
+          console.error(`Failed to load proposal ${i}:`, e);
+        }
+      }
+      setProposals(props);
+    } catch (e: any) {
+      console.error("Failed to load data:", e);
+    } finally {
+      setDataLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (publicKey) loadData();
+  }, [publicKey, loadData]);
+
+  const handlePropose = async () => {
+    setLoading(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await proposeWithdrawal(recipient, amount, reason);
+      setSuccessMsg("Proposal submitted successfully!");
+      setRecipient("");
+      setAmount("");
+      setReason("");
+      await loadData();
+    } catch (e: any) {
+      setError(mapContractError(e.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApprove = async (id: number) => {
+    setLoading(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await approveProposal(id);
+      setSuccessMsg(`Proposal #${id} approved!`);
+      await loadData();
+    } catch (e: any) {
+      setError(mapContractError(e.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBuySubmitter = async () => {
+    setBuyingRole(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await buySubmitterRole();
+      setSuccessMsg("🎉 You are now a Submitter! You can create proposals.");
+      await loadData();
+    } catch (e: any) {
+      setError(mapContractError(e.message));
+    } finally {
+      setBuyingRole(false);
+    }
+  };
+
+  const handleBuyAuthorizer = async () => {
+    setBuyingRole(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await buyAuthorizerRole();
+      setSuccessMsg("🎉 You are now an Authorizer! Full voting power unlocked.");
+      await loadData();
+    } catch (e: any) {
+      setError(mapContractError(e.message));
+    } finally {
+      setBuyingRole(false);
+    }
+  };
+
+  return (
+    <div style={{ fontFamily: "'Inter', sans-serif" }}>
+      {/* Alerts */}
+      {error && (
+        <div className="mb-6 p-4 rounded-xl border border-red-500/30 bg-red-500/10 backdrop-blur-md text-red-300 text-sm break-words">
+          <span className="font-semibold">Error:</span> {error}
+        </div>
+      )}
+      {successMsg && (
+        <div className="mb-6 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 backdrop-blur-md text-emerald-300 text-sm">
+          {successMsg}
+        </div>
+      )}
+
+      {/* Role Status & Upgrade Section */}
+      <div className="mb-8">
+        {isSigner ? (
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-sm font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            Authorizer — Full Access
+          </div>
+        ) : (
+          <div>
+            <h3 className="text-lg font-semibold text-white/80 mb-4">
+              🔓 Upgrade Your Role
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Buy Submitter Card */}
+              {!isSubmitter && (
+                <div className="rounded-xl bg-gradient-to-r from-amber-500/70 via-yellow-400/70 to-amber-500/70 p-[1px] transition-transform duration-300 hover:scale-[1.02]">
+                  <div className="rounded-xl bg-gray-900/95 backdrop-blur-md p-5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-2xl">📝</span>
+                      <h4 className="text-lg font-bold text-amber-300">Submitter Role</h4>
+                    </div>
+                    <p className="text-sm text-white/60 mb-3">
+                      Submitters can create proposals but cannot approve them.
+                    </p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-white/40">
+                        Fee: <span className="text-amber-300 font-mono font-bold text-sm">{formatXLM(submitterFee)} XLM</span>
+                      </span>
+                      <button
+                        onClick={handleBuySubmitter}
+                        disabled={buyingRole}
+                        className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 text-gray-900 text-sm font-bold hover:from-amber-400 hover:to-yellow-400 disabled:opacity-50 transition-all duration-200"
+                      >
+                        {buyingRole ? "Processing..." : "Buy Submitter"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Buy Authorizer Card */}
+              <div className="rounded-xl bg-gradient-to-r from-purple-500/70 via-blue-500/70 to-purple-500/70 p-[1px] transition-transform duration-300 hover:scale-[1.02]">
+                <div className="rounded-xl bg-gray-900/95 backdrop-blur-md p-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-2xl">🛡️</span>
+                    <h4 className="text-lg font-bold text-purple-300">Authorizer Role</h4>
+                  </div>
+                  <p className="text-sm text-white/60 mb-3">
+                    Authorizers can create AND approve proposals. Full voting power.
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-white/40">
+                      Fee: <span className="text-purple-300 font-mono font-bold text-sm">{formatXLM(authorizerFee)} XLM</span>
+                    </span>
+                    <button
+                      onClick={handleBuyAuthorizer}
+                      disabled={buyingRole}
+                      className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white text-sm font-bold hover:from-purple-400 hover:to-blue-400 disabled:opacity-50 transition-all duration-200"
+                    >
+                      {buyingRole ? "Processing..." : "Buy Authorizer"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {isSubmitter && (
+              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                Submitter — Can create proposals
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Proposal Form */}
+      <div className="mb-8 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 p-6">
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <span className="text-xl">📋</span> New Proposal
+        </h3>
+        <div className="flex flex-col space-y-3 max-w-lg">
+          <input
+            type="text"
+            placeholder="Recipient Address (G...)"
+            className="p-3 bg-white/5 rounded-lg text-white border border-white/10 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 transition-all text-sm placeholder:text-white/30"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+          />
+          <input
+            type="number"
+            placeholder="Amount (in stroops, 1 XLM = 10,000,000)"
+            className="p-3 bg-white/5 rounded-lg text-white border border-white/10 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 transition-all text-sm placeholder:text-white/30"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          <input
+            type="text"
+            placeholder="Reason for withdrawal"
+            className="p-3 bg-white/5 rounded-lg text-white border border-white/10 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 transition-all text-sm placeholder:text-white/30"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <button
+            onClick={handlePropose}
+            disabled={loading || !recipient || !amount || !reason || !canPropose}
+            className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-40 transition-all duration-200 text-sm"
+          >
+            {loading ? "Processing..." : "Submit Proposal"}
+          </button>
+          {!canPropose && (
+            <p className="text-xs text-white/40">You need the Submitter or Authorizer role to create proposals.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Proposals List */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <span className="text-xl">📊</span> Proposals
+            <span className="text-sm font-normal text-white/40 ml-1">({counter})</span>
+          </h3>
+          <button
+            onClick={loadData}
+            disabled={dataLoading}
+            className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50 text-white/60 hover:text-white"
+          >
+            {dataLoading ? "Loading..." : "↻ Refresh"}
+          </button>
+        </div>
+
+        {dataLoading && proposals.length === 0 && (
+          <p className="text-white/40 text-sm">Loading proposals...</p>
+        )}
+        {!dataLoading && proposals.length === 0 && (
+          <div className="text-center py-12 text-white/30">
+            <p className="text-4xl mb-2">📭</p>
+            <p className="text-sm">No proposals yet. Be the first to create one!</p>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {proposals.map((p) => {
+            const alreadyApproved = p.approvers.includes(publicKey);
+            return (
+              <div
+                key={p.id}
+                className="rounded-xl bg-white/5 backdrop-blur-md border border-white/10 p-5 transition-all duration-200 hover:bg-white/[0.07]"
+              >
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div className="text-sm space-y-1.5 flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="text-xs font-mono bg-white/10 px-2 py-0.5 rounded text-white/60">#{p.id}</span>
+                      {p.executed ? (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          Executed ✅
+                        </span>
+                      ) : (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          Pending ⏳
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-white/50">
+                      Amount:{" "}
+                      <span className="font-mono text-white font-medium">
+                        {formatXLM(BigInt(p.amount))} XLM
+                      </span>
+                      <span className="text-white/30 ml-1 text-xs">({p.amount} stroops)</span>
+                    </p>
+                    <p className="text-white/50">
+                      To:{" "}
+                      <span className="font-mono text-white/80 text-xs">
+                        {p.recipient?.slice(0, 8)}...{p.recipient?.slice(-6)}
+                      </span>
+                    </p>
+                    <p className="text-white/50">
+                      Reason: <span className="text-white/80">{p.reason}</span>
+                    </p>
+                    <p className="text-white/50">
+                      Approvals:{" "}
+                      <span className={`font-mono font-bold ${p.approvers.length >= approvalThreshold ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {p.approvers.length}/{approvalThreshold}
+                      </span>
+                      <span className="text-white/30 ml-1">needed</span>
+                    </p>
+                  </div>
+                  {!p.executed && canApprove && (
+                    <button
+                      onClick={() => handleApprove(p.id)}
+                      disabled={loading || alreadyApproved}
+                      className={`font-bold py-2.5 px-6 rounded-lg transition-all duration-200 text-sm w-full sm:w-auto ${
+                        alreadyApproved
+                          ? "bg-white/5 border border-white/10 cursor-not-allowed text-white/30"
+                          : "bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white disabled:opacity-50"
+                      }`}
+                    >
+                      {alreadyApproved ? "✓ Approved" : "Approve"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
