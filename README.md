@@ -50,10 +50,13 @@ stellar contract deploy \
 ```
 This deploys the WebAssembly contract to the Stellar Testnet. Once successful, it will return a Contract ID (starting with "C"). Copy the returned Contract ID — you will need it in Step 5.
 
+**Deployed Contract ID:** `CCRKK7YNXQBRHVFRCQJ6Z7QQSVIQUX66WPCYTKVDQBRPQPNH4BEELBR3`
+**Explorer Link:** [https://stellar.expert/explorer/testnet/contract/CCRKK7YNXQBRHVFRCQJ6Z7QQSVIQUX66WPCYTKVDQBRPQPNH4BEELBR3](https://stellar.expert/explorer/testnet/contract/CCRKK7YNXQBRHVFRCQJ6Z7QQSVIQUX66WPCYTKVDQBRPQPNH4BEELBR3)
+
 *Note: After deploying, you must initialize the contract. You can do this via the CLI or use it directly if you add an initialization script. The required command to init the contract with the native XLM token and 3 signer addresses is:*
 ```bash
 stellar contract invoke \
-  --id <YOUR_CONTRACT_ID> \
+  --id CCRKK7YNXQBRHVFRCQJ6Z7QQSVIQUX66WPCYTKVDQBRPQPNH4BEELBR3 \
   --source my-key \
   --network testnet \
   -- \
